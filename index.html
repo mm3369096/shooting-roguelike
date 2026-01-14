@@ -1,1 +1,695 @@
 
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>線條射擊 v7.0 (RPG成長+敵人射擊)</title>
+    <style>
+        /* --- 全局樣式 --- */
+        body { margin: 0; overflow: hidden; background-color: #eeeeee; font-family: 'Courier New', Courier, monospace; user-select: none; color: #333; }
+        
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+        #info { position: absolute; top: 20px; left: 20px; font-weight: bold; font-size: 18px; line-height: 1.5; text-shadow: 1px 1px 0 #fff;}
+        .stat-label { color: #555; font-weight: normal; }
+        .upgrade-text { color: #d35400; font-size: 14px; margin-left: 5px; }
+
+        #level-indicator { 
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%); 
+            font-size: 24px; color: #0066cc; font-weight: bold; 
+        }
+
+        /* 準心 */
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; transform: translate(-50%, -50%);
+        }
+        #crosshair::before, #crosshair::after { content: ''; position: absolute; background: #333; }
+        #crosshair::before { top: 9px; left: 0; width: 20px; height: 2px; }
+        #crosshair::after { top: 0; left: 9px; width: 2px; height: 20px; }
+
+        /* 小地圖 */
+        #minimap-container {
+            position: absolute; top: 20px; right: 20px; width: 160px; height: 160px;
+            background: rgba(240, 240, 240, 0.9); border: 2px solid #555; border-radius: 50%; overflow: hidden;
+        }
+
+        /* 訊息提示 */
+        #msg-display {
+            position: absolute; top: 65%; left: 50%; transform: translateX(-50%);
+            color: #d35400; font-size: 26px; display: none; font-weight: bold; 
+            text-shadow: 0 0 5px rgba(255,255,255,1); text-align: center;
+        }
+
+        /* 遮罩與面板 */
+        #blocker {
+            position: absolute; width: 100%; height: 100%; background-color: rgba(255,255,255,0.9);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            color: #333; z-index: 20; pointer-events: auto;
+        }
+        .panel { 
+            text-align: center; border: 3px solid #333; padding: 30px; 
+            background: #f9f9f9; box-shadow: 0 10px 30px rgba(0,0,0,0.2); max-width: 450px;
+        }
+        .key { display: inline-block; border: 1px solid #555; background: #eee; padding: 2px 6px; border-radius: 4px; margin: 0 2px; font-weight: bold;}
+        
+        /* 排行榜 */
+        table { width: 100%; margin-top: 15px; border-collapse: collapse; }
+        th, td { border-bottom: 1px solid #ccc; padding: 8px; text-align: left; }
+        th { color: #0066cc; }
+
+        #name-input { 
+            font-size: 24px; text-align: center; width: 150px; letter-spacing: 5px; 
+            text-transform: uppercase; border: none; border-bottom: 2px solid #333; background: transparent;
+            margin: 20px 0; outline: none;
+        }
+        
+        #loader {
+            position: fixed; top:0; left:0; width:100%; height:100%; background: #eeeeee; color: #333;
+            display: flex; justify-content: center; align-items: center; z-index: 999; font-size: 24px;
+        }
+    </style>
+</head>
+<body>
+    <div id="loader">SYSTEM LOADING...</div>
+
+    <div id="ui-layer">
+        <div id="info">
+            <div><span class="stat-label">SCORE:</span> <span id="score">0</span></div>
+            <div><span class="stat-label">HP:</span> <span id="health" style="color:#27ae60">100</span> / <span id="max-hp">100</span></div>
+            <div><span class="stat-label">AMMO:</span> <span id="ammo">30/60</span></div>
+            <div style="margin-top:10px; font-size:14px; color:#555; border-top:1px solid #ccc; padding-top:5px;">
+                <div>DMG: <span id="stat-dmg">100%</span> <span class="stat-label">|</span> SPD: <span id="stat-spd">100%</span></div>
+                <div>DEF: <span id="stat-def">0%</span> <span class="stat-label">|</span> RATE: <span id="stat-rate">1.0</span></div>
+            </div>
+        </div>
+        
+        <div id="level-indicator">LEVEL <span id="level">1</span></div>
+        <div id="crosshair"></div>
+        <div id="msg-display"></div>
+        <div id="minimap-container"><canvas id="minimap" width="160" height="160"></canvas></div>
+    </div>
+
+    <div id="blocker" style="display:none;">
+        <div id="start-screen" class="panel">
+            <h1 style="margin:0 0 20px 0; color:#333;">BLUEPRINT RPG</h1>
+            <p>小心！敵人現在會發動攻擊！</p>
+            <p><span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span> 移動</p>
+            <p><span class="key">左鍵</span> 連射 | <span class="key">R</span> 換彈 | <span class="key">G</span> 手榴彈</p>
+            <p style="font-size:14px; color:#c0392b;">撿取彩色箱子升級機體性能</p>
+            <div id="high-score-display" style="margin-top:20px; color:#0066cc; font-size:14px;"></div>
+        </div>
+
+        <div id="game-over-screen" class="panel" style="display:none;">
+            <h1 style="color:#c0392b; margin:0;">GAME OVER</h1>
+            <p style="font-size:18px;">FINAL SCORE: <span id="final-score">0</span></p>
+            <div id="input-section">
+                <p>ENTER INITIALS:</p>
+                <input type="text" id="name-input" maxlength="3" placeholder="AAA" autofocus>
+                <br>
+                <button onclick="saveScoreAndRestart()" style="padding:10px 20px; cursor:pointer; background:#333; color:#fff; border:none;">SAVE RECORD</button>
+            </div>
+            <div id="leaderboard-section" style="display:none;">
+                <h3>TOP RECORDS</h3>
+                <table id="leaderboard-table"></table>
+                <br>
+                <button onclick="restartGame()" style="padding:10px 20px; cursor:pointer; background:#333; color:#fff; border:none;">RESTART</button>
+            </div>
+        </div>
+    </div>
+
+    <script>window.onerror = function(msg) { alert("Error: " + msg); };</script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.126.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/controls/PointerLockControls.js"></script>
+
+    <script>
+        window.onload = function() {
+            if (typeof THREE === 'undefined') { alert("Libs load failed."); return; }
+            document.getElementById('loader').style.display = 'none';
+            document.getElementById('blocker').style.display = 'flex';
+            updateHighScoreDisplay();
+            init(); animate();
+        };
+
+        // --- 全局變數 ---
+        let camera, scene, renderer, controls;
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        let isFiring = false;
+        let prevTime = performance.now();
+        const velocity = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+
+        let gun;
+        const bullets = [];
+        const enemies = []; // 敵人列表
+        const enemyBullets = []; // 敵方子彈
+        const items = [];
+        const grenades = [];
+        const explosions = [];
+
+        // 玩家 RPG 數值
+        const playerStats = {
+            maxHp: 100,
+            defense: 0,      // 0.0 ~ 0.6 (Max 60% reduction)
+            speedMult: 1.0,  // 移動速度倍率
+            damageMult: 1.0, // 傷害倍率
+            fireRate: 150,   // 射擊間隔(ms)，越低越快
+            clipSize: 30     // 彈匣容量
+        };
+        
+        let score = 0;
+        let health = 100;
+        let isGameOver = false;
+        
+        let ammoInClip = 30;
+        let totalAmmo = 60;
+        let grenadeCount = 3;
+        let isReloading = false;
+
+        // 關卡與生成
+        let level = 1;
+        let enemySpawnRate = 2000;
+        let lastSpawnTime = 0;
+        let lastShotTime = 0;
+
+        // 道具池權重設定
+        const lootTable = [
+            { type: 'ammo', weight: 20, color: 0xf1c40f, label: "AMMO" }, // 黃色
+            { type: 'health', weight: 15, color: 0x27ae60, label: "HEALTH" }, // 綠色
+            { type: 'grenade', weight: 10, color: 0x333333, label: "GRENADE" }, // 黑色
+            // --- 強化道具 ---
+            { type: 'max_hp', weight: 8, color: 0x16a085, label: "MAX HP UP" }, // 青綠
+            { type: 'defense', weight: 8, color: 0x2980b9, label: "DEFENSE UP" }, // 藍色
+            { type: 'speed', weight: 8, color: 0x8e44ad, label: "SPEED UP" }, // 紫色
+            { type: 'damage', weight: 8, color: 0xc0392b, label: "DAMAGE UP" }, // 紅色
+            { type: 'fire_rate', weight: 8, color: 0xe67e22, label: "FIRE RATE UP" }, // 橘色
+            { type: 'clip_size', weight: 8, color: 0x7f8c8d, label: "CLIP SIZE UP" } // 灰色
+        ];
+
+        // DOM 緩存
+        const dom = {
+            score: document.getElementById('score'),
+            health: document.getElementById('health'),
+            maxHp: document.getElementById('max-hp'),
+            ammo: document.getElementById('ammo'),
+            level: document.getElementById('level'),
+            msg: document.getElementById('msg-display'),
+            statDmg: document.getElementById('stat-dmg'),
+            statSpd: document.getElementById('stat-spd'),
+            statDef: document.getElementById('stat-def'),
+            statRate: document.getElementById('stat-rate'),
+            minimap: document.getElementById('minimap').getContext('2d')
+        };
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xeeeeee);
+            scene.fog = new THREE.Fog(0xeeeeee, 0, 90);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.y = 1.7;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            controls = new THREE.PointerLockControls(camera, document.body);
+
+            const startScreen = document.getElementById('start-screen');
+            const blocker = document.getElementById('blocker');
+
+            startScreen.addEventListener('click', () => { if(!isGameOver) controls.lock(); });
+            controls.addEventListener('lock', () => { startScreen.style.display = 'none'; blocker.style.display = 'none'; });
+            controls.addEventListener('unlock', () => { if (!isGameOver) { blocker.style.display = 'flex'; startScreen.style.display = 'block'; startScreen.innerHTML = '<h1>PAUSED</h1><p>點擊繼續</p>'; }});
+
+            scene.add(controls.getObject());
+
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+            document.addEventListener('mousedown', (e) => { if(e.button===0) isFiring = true; });
+            document.addEventListener('mouseup', () => { isFiring = false; });
+            window.addEventListener('resize', onWindowResize);
+
+            buildWorld();
+            createGun();
+            updateUI();
+        }
+
+        function buildWorld() {
+            const floorGrid = new THREE.GridHelper(200, 80, 0x888888, 0xcccccc);
+            scene.add(floorGrid);
+            const ceilingGrid = new THREE.GridHelper(200, 40, 0xaaaaaa, 0xdddddd);
+            ceilingGrid.position.y = 10;
+            scene.add(ceilingGrid);
+            const hGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-100, 1.7, -100), new THREE.Vector3(100, 1.7, -100)]);
+            const hMat = new THREE.LineBasicMaterial({ color: 0xaaaaaa });
+            scene.add(new THREE.Line(hGeo, hMat));
+        }
+
+        function createGun() {
+            const gunGeo = new THREE.BoxGeometry(0.15, 0.2, 0.6);
+            const gunEdges = new THREE.EdgesGeometry(gunGeo);
+            const gunMat = new THREE.LineBasicMaterial({ color: 0x0066cc });
+            gun = new THREE.LineSegments(gunEdges, gunMat);
+            gun.position.set(0.25, -0.25, -0.4);
+            camera.add(gun);
+        }
+
+        function onKeyDown(e) {
+            switch (e.code) {
+                case 'KeyW': moveForward = true; break;
+                case 'KeyA': moveLeft = true; break;
+                case 'KeyS': moveBackward = true; break;
+                case 'KeyD': moveRight = true; break;
+                case 'KeyR': reload(); break;
+                case 'KeyG': throwGrenade(); break;
+            }
+        }
+        function onKeyUp(e) {
+            switch (e.code) {
+                case 'KeyW': moveForward = false; break;
+                case 'KeyA': moveLeft = false; break;
+                case 'KeyS': moveBackward = false; break;
+                case 'KeyD': moveRight = false; break;
+            }
+        }
+
+        // --- 戰鬥與攻擊系統 ---
+
+        function shoot() {
+            if (isReloading || ammoInClip <= 0) {
+                if(ammoInClip <= 0 && !isReloading) showMsg("NO AMMO", 1000);
+                return;
+            }
+            
+            lastShotTime = performance.now();
+            ammoInClip--; updateUI();
+            gun.position.z += 0.2; 
+
+            // 根據傷害倍率改變子彈外觀
+            const isStrong = playerStats.damageMult > 1.5;
+            const bGeo = new THREE.BoxGeometry(isStrong?0.08:0.04, isStrong?0.08:0.04, 1.5);
+            const bMat = new THREE.MeshBasicMaterial({ color: isStrong ? 0xe74c3c : 0x0099ff });
+            const bullet = new THREE.Mesh(bGeo, bMat);
+
+            const vector = new THREE.Vector3(); gun.getWorldPosition(vector); bullet.position.copy(vector);
+            const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
+            bullet.lookAt(bullet.position.clone().add(dir));
+            bullet.velocity = dir.multiplyScalar(80);
+            bullet.creationTime = performance.now();
+            bullet.damage = 1 * playerStats.damageMult; // 套用傷害倍率
+
+            bullets.push(bullet); scene.add(bullet);
+        }
+
+        function throwGrenade() {
+            if (grenadeCount <= 0) { showMsg("NO GRENADES", 1000); return; }
+            grenadeCount--; updateUI();
+            const geo = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+            const mat = new THREE.LineBasicMaterial({ color: 0x333333 });
+            const nade = new THREE.LineSegments(new THREE.EdgesGeometry(geo), mat);
+            const vector = new THREE.Vector3(); gun.getWorldPosition(vector); nade.position.copy(vector);
+            const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
+            nade.velocity = dir.multiplyScalar(25); nade.velocity.y += 10;
+            grenades.push(nade); scene.add(nade);
+        }
+
+        function explode(position) {
+            const geo = new THREE.SphereGeometry(1, 16, 16);
+            const mat = new THREE.MeshBasicMaterial({ color: 0xffaa00, wireframe: true, transparent: true, opacity: 1 });
+            const explosion = new THREE.Mesh(geo, mat);
+            explosion.position.copy(position); explosion.scaleVal = 1;
+            explosions.push(explosion); scene.add(explosion);
+
+            const radius = 8.0;
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const e = enemies[i];
+                if (e.position.distanceTo(position) < radius) {
+                    takeDamage(e, 5 * playerStats.damageMult, i);
+                }
+            }
+        }
+
+        function enemyShoot(enemy) {
+            const ebGeo = new THREE.BoxGeometry(0.2, 0.2, 0.8);
+            const ebMat = new THREE.MeshBasicMaterial({ color: enemy.baseColor }); // 子彈顏色跟怪一樣
+            const bullet = new THREE.Mesh(ebGeo, ebMat);
+            
+            bullet.position.copy(enemy.position);
+            
+            // 瞄準玩家
+            const target = camera.position.clone();
+            target.y -= 0.5; // 瞄準身體而不是頭頂
+            bullet.lookAt(target);
+            
+            const dir = target.sub(enemy.position).normalize();
+            bullet.velocity = dir.multiplyScalar(15); // 敵方子彈較慢
+            bullet.creationTime = performance.now();
+            bullet.damage = 10; // 基礎傷害
+            
+            enemyBullets.push(bullet);
+            scene.add(bullet);
+        }
+
+        function takePlayerDamage(amount) {
+            // 防禦公式
+            const finalDmg = Math.max(1, Math.floor(amount * (1 - playerStats.defense)));
+            health -= finalDmg;
+            updateUI();
+            
+            // 受傷特效 (紅屏)
+            document.body.style.backgroundColor = '#500';
+            setTimeout(() => document.body.style.backgroundColor = '#eeeeee', 100);
+
+            if (health <= 0) endGame();
+        }
+
+        // --- 敵人生成與邏輯 ---
+        function spawnEnemy() {
+            if (!controls.isLocked || isGameOver) return;
+            
+            let type = 'normal';
+            let color = 0xc0392b; // Red
+            let size = [1.2, 2.0, 1.2];
+            let hp = 1 + (level * 0.5);
+            let speed = 6 + (level * 0.2);
+            let canShoot = true;
+
+            const rand = Math.random();
+            
+            if (level >= 2 && rand < 0.2) { // TANK
+                type = 'tank'; color = 0x8e44ad; size = [2.0, 3.0, 2.0];
+                hp = 5 + (level * 1.5); speed = 3; canShoot = false; // 坦克不射擊，只衝撞
+            }
+            else if (level >= 3 && rand < 0.45) { // PULSE (High speed, shoots fast)
+                type = 'pulse'; color = 0x00cec9; size = [1.0, 1.0, 1.0];
+                hp = 1 + (level * 0.2); speed = 10; canShoot = true;
+            }
+
+            const geo = new THREE.BoxGeometry(size[0], size[1], size[2]);
+            const mat = new THREE.LineBasicMaterial({ color: color });
+            const enemy = new THREE.LineSegments(new THREE.EdgesGeometry(geo), mat);
+            
+            const angle = Math.random() * Math.PI * 2;
+            const radius = 30 + Math.random() * 30;
+            enemy.position.set(camera.position.x + Math.cos(angle) * radius, size[1]/2, camera.position.z + Math.sin(angle) * radius);
+            
+            enemy.type = type;
+            enemy.hp = hp; enemy.maxHp = hp; enemy.baseColor = color; enemy.speed = speed;
+            enemy.flashTime = 0;
+            enemy.canShoot = canShoot;
+            enemy.lastAttack = 0;
+            enemy.attackRate = type === 'pulse' ? 1500 : 3000; // 射擊頻率
+
+            enemies.push(enemy);
+            scene.add(enemy);
+        }
+
+        function spawnItem() {
+            if (!controls.isLocked || isGameOver) return;
+            
+            // 加權隨機抽取
+            let totalWeight = 0;
+            lootTable.forEach(i => totalWeight += i.weight);
+            let random = Math.random() * totalWeight;
+            let selectedItem = lootTable[0];
+            
+            for (let item of lootTable) {
+                if (random < item.weight) { selectedItem = item; break; }
+                random -= item.weight;
+            }
+
+            const item = new THREE.LineSegments(
+                new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
+                new THREE.LineBasicMaterial({ color: selectedItem.color })
+            );
+            
+            const angle = Math.random() * Math.PI * 2;
+            const radius = 15 + Math.random() * 35;
+            item.position.set(camera.position.x + Math.cos(angle) * radius, 0.5, camera.position.z + Math.sin(angle) * radius);
+            
+            item.props = selectedItem; // 綁定屬性
+            items.push(item);
+            scene.add(item);
+        }
+
+        function applyItemEffect(itemProps) {
+            const type = itemProps.type;
+            let msg = itemProps.label;
+            
+            switch(type) {
+                case 'ammo': totalAmmo += 30; break;
+                case 'health': health = Math.min(health + 30, playerStats.maxHp); break;
+                case 'grenade': grenadeCount += 2; break;
+                // RPG Stats
+                case 'max_hp': 
+                    playerStats.maxHp += 10; health += 10; 
+                    msg += " (+10)"; break;
+                case 'defense': 
+                    playerStats.defense = Math.min(playerStats.defense + 0.05, 0.6); // Max 60%
+                    msg += " (+5%)"; break;
+                case 'speed': 
+                    playerStats.speedMult += 0.1; 
+                    msg += " (+10%)"; break;
+                case 'damage': 
+                    playerStats.damageMult += 0.2; 
+                    msg += " (+20%)"; break;
+                case 'fire_rate': 
+                    playerStats.fireRate = Math.max(50, playerStats.fireRate - 10); // Min 50ms
+                    msg += " (FASTER)"; break;
+                case 'clip_size': 
+                    playerStats.clipSize += 5; 
+                    msg += " (+5)"; break;
+            }
+            showMsg(msg, 1500);
+            updateUI();
+        }
+
+        // --- 遊戲循環 ---
+        function animate() {
+            requestAnimationFrame(animate);
+            if (!controls.isLocked || isGameOver) return;
+            const time = performance.now();
+            const delta = (time - prevTime) / 1000;
+            prevTime = time;
+
+            // 射擊 (根據當前射速)
+            if (isFiring && time - lastShotTime > playerStats.fireRate) shoot();
+
+            // 移動 (根據跑速倍率)
+            velocity.x -= velocity.x * 10.0 * delta;
+            velocity.z -= velocity.z * 10.0 * delta;
+            direction.z = Number(moveForward) - Number(moveBackward);
+            direction.x = Number(moveRight) - Number(moveLeft);
+            direction.normalize();
+            
+            const currentSpeed = 400.0 * playerStats.speedMult;
+            if (moveForward || moveBackward) velocity.z -= direction.z * currentSpeed * delta;
+            if (moveLeft || moveRight) velocity.x -= direction.x * currentSpeed * delta;
+            controls.moveRight(-velocity.x * delta);
+            controls.moveForward(-velocity.z * delta);
+
+            gun.position.z = THREE.MathUtils.lerp(gun.position.z, -0.4, 0.1);
+
+            // 更新子彈
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const b = bullets[i];
+                b.position.add(b.velocity.clone().multiplyScalar(delta));
+                if (time - b.creationTime > 2000) { scene.remove(b); bullets.splice(i, 1); continue; }
+                
+                for (let j = enemies.length - 1; j >= 0; j--) {
+                    if (b.position.distanceTo(enemies[j].position) < (enemies[j].type==='tank'?2.0:1.5)) {
+                        takeDamage(enemies[j], b.damage, j);
+                        scene.remove(b); bullets.splice(i, 1); break;
+                    }
+                }
+            }
+
+            // 更新敵方子彈
+            const pPos = camera.position;
+            for (let i = enemyBullets.length - 1; i >= 0; i--) {
+                const b = enemyBullets[i];
+                b.position.add(b.velocity.clone().multiplyScalar(delta));
+                if (time - b.creationTime > 3000) { scene.remove(b); enemyBullets.splice(i, 1); continue; }
+                
+                // 玩家中彈判定
+                if (b.position.distanceTo(pPos) < 1.0) {
+                    takePlayerDamage(b.damage);
+                    scene.remove(b); enemyBullets.splice(i, 1);
+                }
+            }
+
+            // 生成敵人
+            if (time - lastSpawnTime > enemySpawnRate) { spawnEnemy(); lastSpawnTime = time; }
+
+            // 敵人行為 (AI)
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const e = enemies[i];
+                if (e.flashTime > 0) { e.flashTime -= delta; if (e.flashTime <= 0) e.material.color.setHex(e.baseColor); }
+
+                const distToPlayer = e.position.distanceTo(pPos);
+                
+                // 移動
+                const dir = pPos.clone().sub(e.position); dir.y = 0; dir.normalize();
+                e.position.add(dir.multiplyScalar(e.speed * delta));
+                e.lookAt(pPos);
+
+                // 攻擊 (射擊)
+                if (e.canShoot && distToPlayer < 40 && time - e.lastAttack > e.attackRate) {
+                    enemyShoot(e);
+                    e.lastAttack = time;
+                }
+
+                // 碰撞傷害
+                if (distToPlayer < 1.5) {
+                    takePlayerDamage(15);
+                    scene.remove(e); enemies.splice(i, 1);
+                }
+            }
+
+            // 道具
+            for (let i = items.length - 1; i >= 0; i--) {
+                const it = items[i]; it.rotation.y += delta;
+                if (it.position.distanceTo(pPos) < 2.0) {
+                    applyItemEffect(it.props);
+                    scene.remove(it); items.splice(i, 1);
+                }
+            }
+            
+            // 手榴彈與爆炸
+            updateGrenadesAndExplosions(delta);
+
+            drawMinimap();
+            renderer.render(scene, camera);
+        }
+
+        function updateGrenadesAndExplosions(delta) {
+             for (let i = grenades.length - 1; i >= 0; i--) {
+                const g = grenades[i]; g.velocity.y -= 30 * delta; g.position.add(g.velocity.clone().multiplyScalar(delta));
+                g.rotation.x += delta * 5; g.rotation.y += delta * 5;
+                if (g.position.y <= 0.1) { explode(g.position); scene.remove(g); grenades.splice(i, 1); }
+            }
+            for (let i = explosions.length - 1; i >= 0; i--) {
+                const ex = explosions[i]; ex.scaleVal += 15 * delta; ex.scale.set(ex.scaleVal, ex.scaleVal, ex.scaleVal);
+                ex.material.opacity -= 2 * delta;
+                if (ex.material.opacity <= 0) { scene.remove(ex); explosions.splice(i, 1); }
+            }
+        }
+
+        function takeDamage(enemy, dmg, index) {
+            enemy.hp -= dmg;
+            enemy.flashTime = 0.1; enemy.material.color.setHex(0xffffff);
+            const pushDir = enemy.position.clone().sub(camera.position).normalize();
+            enemy.position.add(pushDir.multiplyScalar(0.5));
+            if (enemy.hp <= 0) {
+                scene.remove(enemy); enemies.splice(index, 1);
+                score += (enemy.type === 'tank' ? 50 : 10);
+                if (score >= level * 150) { 
+                    level++; 
+                    enemySpawnRate = Math.max(800, 2000-(level*150)); 
+                    showMsg("LEVEL UP!", 2000); 
+                    // 升級時掉落道具
+                    spawnItem(); 
+                }
+                // 一般擊殺也有低機率掉落
+                if (Math.random() < 0.15) spawnItem();
+
+                updateUI();
+            }
+        }
+
+        function reload() {
+            if (isReloading || ammoInClip >= playerStats.clipSize || totalAmmo <= 0) return;
+            isReloading = true; showMsg("RELOADING...", 1000);
+            setTimeout(() => {
+                const needed = playerStats.clipSize - ammoInClip;
+                const toAdd = Math.min(needed, totalAmmo);
+                ammoInClip += toAdd; totalAmmo -= toAdd;
+                isReloading = false; updateUI();
+            }, 1500);
+        }
+
+        function showMsg(text, duration) {
+            dom.msg.innerText = text; dom.msg.style.display = "block";
+            if (duration) setTimeout(() => dom.msg.style.display = "none", duration);
+        }
+
+        function updateUI() {
+            dom.score.innerText = score;
+            dom.health.innerText = health;
+            dom.maxHp.innerText = playerStats.maxHp;
+            dom.ammo.innerText = `${ammoInClip}/${totalAmmo}`;
+            dom.level.innerText = level;
+            
+            dom.statDmg.innerText = Math.round(playerStats.damageMult * 100) + "%";
+            dom.statSpd.innerText = Math.round(playerStats.speedMult * 100) + "%";
+            dom.statDef.innerText = Math.round(playerStats.defense * 100) + "%";
+            dom.statRate.innerText = (1000/playerStats.fireRate).toFixed(1) + "/s";
+        }
+
+        // --- 小地圖與其他輔助 ---
+        function drawMinimap() {
+            const ctx = dom.minimap;
+            ctx.fillStyle = 'rgba(240, 240, 240, 0.85)'; ctx.fillRect(0, 0, 160, 160);
+            const cx = 80, cy = 80, range = 50, scale = 80 / range;
+
+            // 玩家
+            ctx.fillStyle = '#333'; ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI * 2); ctx.fill(); 
+            const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
+            ctx.strokeStyle = '#333'; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + dir.x * 12, cy + dir.z * 12); ctx.stroke();
+
+            // 敵人
+            enemies.forEach(e => {
+                const dx = e.position.x - camera.position.x, dz = e.position.z - camera.position.z;
+                if (Math.abs(dx) < range && Math.abs(dz) < range) {
+                    ctx.fillStyle = '#' + e.material.color.getHexString();
+                    ctx.beginPath(); ctx.arc(cx + dx * scale, cy + dz * scale, e.type==='tank'?5:3, 0, Math.PI * 2); ctx.fill();
+                }
+            });
+
+            // 道具 (在小地圖顯示顏色)
+            items.forEach(i => {
+                const dx = i.position.x - camera.position.x, dz = i.position.z - camera.position.z;
+                if (Math.abs(dx) < range && Math.abs(dz) < range) {
+                    ctx.fillStyle = '#' + i.material.color.getHexString();
+                    ctx.fillRect(cx + dx * scale - 3, cy + dz * scale - 3, 6, 6);
+                }
+            });
+        }
+
+        const STORAGE_KEY = 'line_shooter_scores';
+        function saveScoreAndRestart() {
+            let name = document.getElementById('name-input').value.toUpperCase() || "UNK";
+            let scores = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+            scores.push({ name, score, date: new Date().toLocaleDateString() });
+            scores.sort((a, b) => b.score - a.score);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(scores.slice(0, 10)));
+            
+            const table = document.getElementById('leaderboard-table');
+            table.innerHTML = `<tr><th>RANK</th><th>NAME</th><th>SCORE</th></tr>`;
+            scores.slice(0, 5).forEach((s, i) => table.innerHTML += `<tr><td>#${i+1}</td><td>${s.name}</td><td>${s.score}</td></tr>`);
+            
+            document.getElementById('input-section').style.display = 'none';
+            document.getElementById('leaderboard-section').style.display = 'block';
+        }
+
+        function endGame() {
+            isGameOver = true; controls.unlock();
+            document.getElementById('blocker').style.display = 'flex';
+            document.getElementById('start-screen').style.display = 'none';
+            document.getElementById('game-over-screen').style.display = 'block';
+            document.getElementById('final-score').innerText = score;
+            document.getElementById('input-section').style.display = 'block';
+            document.getElementById('leaderboard-section').style.display = 'none';
+        }
+        
+        window.saveScoreAndRestart = saveScoreAndRestart;
+        window.restartGame = function() { location.reload(); }; // 簡單重整頁面來重置所有狀態
+        function updateHighScoreDisplay() {
+            const s = JSON.parse(localStorage.getItem(STORAGE_KEY)||"[]");
+            if(s.length) document.getElementById('high-score-display').innerText = `TOP: ${s[0].name} - ${s[0].score}`;
+        }
+        function onWindowResize() { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
+    </script>
+</body>
+</html>
